@@ -79,7 +79,7 @@ func (s *APIServer) handleGetAccount(w http.ResponseWriter, r *http.Request) err
 
 func (s *APIServer) handleGetAccountByID(w http.ResponseWriter, r *http.Request) error {
 	id := mux.Vars(r)["id"]
-	fmt.Printf(id)
+	fmt.Println(id)
 	account := types.NewAccount("Remy", "Z")
 
 	return WriteJSON(w, http.StatusOK, account)
