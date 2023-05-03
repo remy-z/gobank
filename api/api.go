@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	jwt "github.com/golang-jwt/jwt/v4"
 	"github.com/gorilla/mux"
@@ -50,7 +51,7 @@ func (s *APIServer) Run() {
 	router := mux.NewRouter()
 
 	router.HandleFunc("/account", makeHttpHandleFunc(s.handleAccount))
-	router.HandleFunc("/account/{id}", withJWTAuth(makeHttpHandleFunc(s.handleGetAccountByID)))
+	router.HandleFunc("/account/{id}", withJWTAuth(makeHttpHandleFunc(s.handleGetAccountByID), s.store))
 	router.HandleFunc("/transfer", makeHttpHandleFunc(s.handleTransfer))
 
 	log.Println("JSON API server running on port: ", s.listenAddr)
@@ -112,6 +113,13 @@ func (s *APIServer) handleCreateAccount(w http.ResponseWriter, r *http.Request) 
 	if err := s.store.CreateAccount(account); err != nil {
 		return err
 	}
+
+	tokenString, err := createJWT(account)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("JWT token: ", tokenString)
 	return WriteJSON(w, http.StatusOK, account)
 }
 
@@ -137,17 +145,69 @@ func (s *APIServer) handleTransfer(w http.ResponseWriter, r *http.Request) error
 	return WriteJSON(w, http.StatusOK, transferReq)
 }
 
-func withJWTAuth(handlerFunc http.HandlerFunc) http.HandlerFunc {
+func createJWT(account *types.Account) (string, error) {
+
+	type MyCustomClaims struct {
+		AccountNumber int64 `json:"accountNumber"`
+		jwt.RegisteredClaims
+	}
+
+	now := time.Now()
+	standard := &jwt.RegisteredClaims{
+		ExpiresAt: &jwt.NumericDate{now.Add(time.Hour * 240)},
+	}
+
+	claims := MyCustomClaims{
+		account.Number,
+		*standard,
+	}
+
+	secret := "secret123" // :D
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	ss, err := token.SignedString([]byte(secret))
+	return ss, err
+}
+
+func permissionDenied(w http.ResponseWriter, err error) {
+	fmt.Println(err)
+	WriteJSON(w, http.StatusForbidden, ApiError{Error: "permission denied"})
+}
+func withJWTAuth(handlerFunc http.HandlerFunc, s storage.Storage) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("calling JWT auth middleware")
 
 		tokenString := r.Header.Get("x-jwt-token")
-		_, err := validateJWT(tokenString)
+		token, err := validateJWT(tokenString)
 		if err != nil {
-			WriteJSON(w, http.StatusForbidden, ApiError{Error: "invalid token"})
+			permissionDenied(w, err)
 			return
 		}
+
+		if !token.Valid {
+			permissionDenied(w, fmt.Errorf("invalid token"))
+			return
+		}
+		userID, err := getID(r)
+		if err != nil {
+			permissionDenied(w, err)
+			return
+		}
+
+		account, err := s.GetAccountByID(userID)
+		if err != nil {
+			permissionDenied(w, err)
+			return
+		}
+
+		claims := token.Claims.(jwt.MapClaims)
+		claimsAccNumber := int64(claims["accountNumber"].(float64))
+		if account.Number != claimsAccNumber {
+			permissionDenied(w, fmt.Errorf("account number doesn't match claims"))
+			return
+		}
+
+		fmt.Println(claims)
 		handlerFunc(w, r)
 	}
 }
@@ -163,6 +223,7 @@ func validateJWT(tokenString string) (*jwt.Token, error) {
 		return []byte(secret), nil
 	})
 }
+
 func getID(r *http.Request) (int, error) {
 	idStr := mux.Vars(r)["id"]
 	id, err := strconv.Atoi(idStr)
