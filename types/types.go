@@ -14,11 +14,6 @@ type Account struct {
 	CreatedAt time.Time `json:"createAt"`
 }
 
-type CreateAccountRequest struct {
-	FirstName string `json:"firstName"`
-	LastName  string `json:"lastName"`
-}
-
 func NewAccount(firstName, lastName string) *Account {
 	return &Account{
 		FirstName: firstName,
@@ -27,4 +22,14 @@ func NewAccount(firstName, lastName string) *Account {
 		Balance:   0,
 		CreatedAt: time.Now().UTC(),
 	}
+}
+
+type CreateAccountRequest struct {
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+}
+
+type TransferRequest struct {
+	ToAccount int `json:"toAccount"`
+	Amount    int `json:"amount"`
 }
